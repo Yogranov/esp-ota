@@ -2,8 +2,7 @@ import socket
 from time import sleep
 import os
 import json
-import re 
-import pathlib
+import re
 
 # Print and exit, holds the window open
 def dd(misc):
@@ -11,18 +10,18 @@ def dd(misc):
     input("\nPress ENTER key to exit...")
     exit()
 
+
 # Load configs from json file
-project_dir = str(pathlib.Path(__file__).parent.resolve())
-f = open(project_dir + '/config.json')
+f = open("./config.json")
 if not f:
     dd("Config file not found")
 
 json_config = json.load(f)
 
 # Configs
-ESP_IP         = json_config["esp_ip"]
-PORT           = json_config["port"]
-FILE           = json_config["bin_path"]
+ESP_IP = json_config["esp_ip"]
+PORT = json_config["port"]
+FILE = json_config["bin_path"]
 
 try:
     DISABLE_SCRIPT = json_config["disable_script"]
@@ -30,9 +29,9 @@ except KeyError:
     DISABLE_SCRIPT = False
 
 # Constans
-DOWNLOAD_BATCH         = 1024
-FILE_MIN_SIZE          = 100     * 1000    # 100kb
-FILE_MAX_SIZE          = 3       * 1000000 # 3MB
+DOWNLOAD_BATCH = 1024
+FILE_MIN_SIZE = 100 * 1000  # 100kb
+FILE_MAX_SIZE = 3 * 1000000  # 3MB
 FILE_ALLOWED_EXTENSION = ".bin"
 
 try:
@@ -40,12 +39,14 @@ try:
 except:
     dd("Bin file error, please check file path")
 
-PREPERE_MESSAGE = f'0 {PORT} {str(file_size)} 0' + 'a' * 40 # identity message, must be at least 44 charechters
+PREPERE_MESSAGE = (
+    f"0 {PORT} {str(file_size)} 0" + "a" * 40
+)  # identity message, must be at least 44 charechters
 
 
 # Send UDP packet to ESP make it start request data from the tcp server
 def identity_phase():
-    SOCKET_TIMEOUT_DURATION = 3 #seconds
+    SOCKET_TIMEOUT_DURATION = 3  # seconds
 
     udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     udp_socket.settimeout(SOCKET_TIMEOUT_DURATION)
@@ -79,7 +80,7 @@ def transfer_data():
     file = open(FILE, "rb")
     file_part = file.read(DOWNLOAD_BATCH)
 
-    print('Connected by', addr)
+    print("Connected by", addr)
     while True:
         try:
             conn.send(file_part)
@@ -91,7 +92,7 @@ def transfer_data():
                 break
 
         except socket.error:
-            print ("Error Occurred")
+            print("Error Occurred")
             break
 
     conn.close()

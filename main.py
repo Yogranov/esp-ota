@@ -1,139 +1,107 @@
-import socket
 from time import sleep
 import os
-import json
+import pathlib
 import re
-
-# Print and exit, holds the window open
-def dd(misc):
-    print(misc)
-    input("\nPress ENTER key to exit...")
-    exit()
+import socket
 
 
-# Load configs from json file
-f = open("./config.json")
-if not f:
-    dd("Config file not found")
-
-json_config = json.load(f)
-
-# Configs
-ESP_IP = json_config["esp_ip"]
-PORT = json_config["port"]
-FILE = json_config["bin_path"]
-
-try:
-    DISABLE_SCRIPT = json_config["disable_script"]
-except KeyError:
-    DISABLE_SCRIPT = False
-
-# Constans
-DOWNLOAD_BATCH = 1024
-FILE_MIN_SIZE = 100 * 1000  # 100kb
-FILE_MAX_SIZE = 3 * 1000000  # 3MB
-FILE_ALLOWED_EXTENSION = ".bin"
-
-try:
-    file_size = os.path.getsize(FILE)
-except:
-    dd("Bin file error, please check file path")
-
-PREPERE_MESSAGE = (
-    f"0 {PORT} {str(file_size)} 0" + "a" * 40
-)  # identity message, must be at least 44 charechters
-
-
-# Send UDP packet to ESP make it start request data from the tcp server
-def identity_phase():
-    SOCKET_TIMEOUT_DURATION = 3  # seconds
-
-    udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    udp_socket.settimeout(SOCKET_TIMEOUT_DURATION)
-
-    try:
-        udp_socket.sendto(PREPERE_MESSAGE.encode(), (ESP_IP, PORT))
-        data, address = udp_socket.recvfrom(DOWNLOAD_BATCH)
-
-    except socket.timeout:
-        print("Socket timeout, check ESP ip and port")
-        return False
-
-    udp_socket.close()
-
-    if data:
-        print(f"ESP with ip {address} got the request and ready to OTA")
-    else:
-        print("ESP not found, aborting...")
-        return False
-
-    return True
-
-
-# Open tcp server and response to ESP with new bin file
-def transfer_data():
-    tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    tcp_socket.bind(("", PORT))
-
-    tcp_socket.listen(1)
-    conn, addr = tcp_socket.accept()
-    file = open(FILE, "rb")
-    file_part = file.read(DOWNLOAD_BATCH)
-
-    print("Connected by", addr)
-    while True:
-        try:
-            conn.send(file_part)
-            file_part = file.read(DOWNLOAD_BATCH)
-
-            data = conn.recv(DOWNLOAD_BATCH)
-            if not data:
-                print("OTA done")
-                break
-
-        except socket.error:
-            print("Error Occurred")
-            break
-
-    conn.close()
-
-
-def config_validate():
-    IP_REGEX = r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$"
+class Dota:
+    DOWNLOAD_BATCH = 1024
+    FILE_MIN_SIZE = 100 * 1000  # 100kb
+    FILE_MAX_SIZE = 3 * 1000000  # 3MB
+    FILE_ALLOWED_EXTENSION = ".bin"
     VALID_PORTS = [3232, 8266]
+    IP_PATTERN = r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$"
+    SOCKET_TIMEOUT_SECS = 3  # seconds
 
-    if file_size < FILE_MIN_SIZE or file_size > FILE_MAX_SIZE:
-        print("Wrong file size")
-        return False
+    def __init__(self, ip, filename, port=3232):
+        self._ip = ip
+        self._port = port
+        self._fw_size = 0
+        self._filename = filename
+        self._validate()
+        self._tcp_socket = self.tcp_socket()
 
-    if not FILE[-4:] == (FILE_ALLOWED_EXTENSION):
-        print("Wrong file extention")
-        return False
+    def _validate(self):
+        self._file_size = os.path.getsize(self._filename)
+        if self._file_size < Dota.FILE_MIN_SIZE or self._file_size > Dota.FILE_MAX_SIZE:
+            return False
 
-    if not re.match(IP_REGEX, ESP_IP):
-        print("Wrong IP format")
-        return False
+        if not pathlib.Path(self._filename).suffix == Dota.FILE_ALLOWED_EXTENSION:
+            raise ValueError(
+                f"FW file must be a {Dota.FILE_ALLOWED_EXTENSION} file")
 
-    if PORT not in VALID_PORTS:
-        print("Port not valid")
-        return False
+        if not re.match(Dota.IP_PATTERN, self._ip):
+            raise ValueError(f"Wrong IP format")
 
-    return True
+        if self._port not in Dota.VALID_PORTS:
+            raise ValueError(
+                f"Invalid port, received: {self._port}, valid values: {Dota.VALID_PORTS}")
+
+    def start_dota(self):
+        try:
+            res = self._identify()
+            if not res:
+                return res
+            sleep(1)
+            res = self._transfer_data()
+        except Exception as e:
+            print(e)
+            res = False
+        return res
+
+    def _identify(self):
+        udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        udp_socket.settimeout(Dota.SOCKET_TIMEOUT_SECS)
+        # identity message, must be at least 44 charechters
+        message = (f"0 {self._port} {str(self._file_size)} 0" + "a" * 40)
+
+        try:
+            udp_socket.sendto(message.encode(), (self._ip, self._port))
+            data, address = udp_socket.recvfrom(Dota.DOWNLOAD_BATCH)
+        except socket.timeout:
+            udp_socket.close()
+            print("Socket timeout, check ESP ip and port")
+            return False
+
+        if not data:
+            print("ESP not found, aborting...")
+            return False
+
+        print(f"ESP with ip {address} got the request and ready to OTA")
+        return True
+
+    def tcp_socket(self):
+        tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        tcp_socket.bind(("", self._port))
+        tcp_socket.listen(1)
+        return tcp_socket
+
+    def _transfer_data(self):
+        conn, addr = self._tcp_socket.accept()
+        f = open(self._filename, "rb")
+        file_part = f.read(Dota.DOWNLOAD_BATCH)
+
+        print("Connected by", addr)
+        print(f"[DirectOta] starting OTA")
+        res = True
+        while True:
+            try:
+                conn.send(file_part)
+                file_part = f.read(Dota.DOWNLOAD_BATCH)
+                data = conn.recv(Dota.DOWNLOAD_BATCH)
+                if not data:
+                    print("[DirectOta] OTA done")
+                    break
+            except socket.error:
+                print("Error Occurred")
+                res = False
+                break
+        conn.close()
+        return res
 
 
-# Program starts here
 if __name__ == "__main__":
-    if DISABLE_SCRIPT:
-        exit()
-
-    if not config_validate():
-        dd("Config validate failed, aborting...")
-
-    if identity_phase():
-        sleep(1)
-        transfer_data()
-
-    else:
-        dd("Identity phase error, aborting...")
-
-    dd("All done :)")
+    # dota = Dota("192.168.41.16",".pio/build/staging/firmware2.bin")
+    # dota.start_dota()
+    pass
